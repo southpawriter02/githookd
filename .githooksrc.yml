@@ -1,0 +1,4 @@
+hooks:
+  pre-commit:
+    - run: "echo 'pre-commit hook running...'"
+      description: "A test hook"
