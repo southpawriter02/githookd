@@ -24,13 +24,13 @@ func TestGetHooksDir(t *testing.T) {
 		t.Fatalf("GetHooksDir() error = %v", err)
 	}
 
-	root, err := GetRepoRoot()
-	if err != nil {
-		t.Fatal(err)
+	// Should be an absolute path
+	if !filepath.IsAbs(hooksDir) {
+		t.Errorf("GetHooksDir() = %q, want absolute path", hooksDir)
 	}
 
-	expectedHooksDir := filepath.Join(root, ".git", "hooks")
-	if hooksDir != expectedHooksDir {
-		t.Errorf("expected hooks dir to be '%s', got '%s'", expectedHooksDir, hooksDir)
+	// Should end with "hooks"
+	if filepath.Base(hooksDir) != "hooks" {
+		t.Errorf("GetHooksDir() = %q, want path ending in 'hooks'", hooksDir)
 	}
 }

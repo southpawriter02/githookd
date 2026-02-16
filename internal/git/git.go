@@ -2,35 +2,41 @@ package git
 
 import (
 	"fmt"
-	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
-// GetRepoRoot returns the root directory of the Git repository.
+// GetRepoRoot returns the root directory of the Git repository
+// using git rev-parse --show-toplevel.
 func GetRepoRoot() (string, error) {
-	dir, err := os.Getwd()
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("not a git repository (or any parent): %w", err)
 	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("not a git repository")
-		}
-		dir = parent
-	}
+	return strings.TrimSpace(string(output)), nil
 }
 
-// GetHooksDir returns the path to the .git/hooks directory.
+// GetHooksDir returns the path to the Git hooks directory,
+// respecting core.hooksPath if configured.
 func GetHooksDir() (string, error) {
-	repoRoot, err := GetRepoRoot()
+	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks/")
+	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to determine hooks directory: %w", err)
 	}
-	return filepath.Join(repoRoot, ".git", "hooks"), nil
+
+	hooksDir := strings.TrimSpace(string(output))
+
+	// Ensure absolute path
+	if !filepath.IsAbs(hooksDir) {
+		repoRoot, err := GetRepoRoot()
+		if err != nil {
+			return "", err
+		}
+		hooksDir = filepath.Join(repoRoot, hooksDir)
+	}
+
+	return filepath.Clean(hooksDir), nil
 }

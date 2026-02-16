@@ -4,58 +4,61 @@ import (
 	"fmt"
 	"githookd/internal/config"
 	"githookd/internal/git"
+	"githookd/internal/logging"
+	"githookd/internal/runner"
 	"os"
-	"os/exec"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run [hook]",
+	Use:   "run [hook] [args...]",
 	Short: "Run the specified hook",
 	Long: `This command runs the specified hook. This is useful for testing your hooks
 or for running them in a CI/CD environment.`,
-	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		hookName := args[0]
 		hookArgs := args[1:]
 
 		cfg, err := config.Load(configFile)
 		if err != nil {
-			fmt.Printf("Error loading config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 			os.Exit(1)
 		}
 
-		commands, ok := cfg.Hooks[hookName]
-		if !ok {
-			// No commands for this hook, so we can exit successfully.
-			os.Exit(0)
+		resolved, errs := cfg.Resolve()
+		if len(errs) > 0 {
+			fmt.Fprint(os.Stderr, runner.FormatErrors(errs))
+			os.Exit(1)
 		}
+
+		// Set up logging
+		slogLevel := logging.ConfigLevelToSlog(resolved.LogLevel)
+		logging.Setup(slogLevel, os.Stderr)
 
 		repoRoot, err := git.GetRepoRoot()
 		if err != nil {
-			fmt.Printf("Error getting repo root: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error getting repo root: %v\n", err)
 			os.Exit(1)
 		}
 
-		for _, command := range commands {
-			fmt.Printf("Running command: %s\n", command.Run)
-			// The script and its arguments are passed to sh.
-			script := command.Run + " " + strings.Join(hookArgs, " ")
-			cmd := exec.Command("sh", "-c", script)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Env = append(os.Environ(),
-				"GHM_HOOK_NAME="+hookName,
-				"GHM_ROOT="+repoRoot,
-			)
-
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("Command failed: %v\n", err)
-				os.Exit(1)
-			}
+		commands, ok := resolved.Hooks[hookName]
+		if !ok {
+			// No commands for this hook, exit successfully.
+			return nil
 		}
+
+		if err := runner.RunHook(hookName, commands, repoRoot, hookArgs); err != nil {
+			if hookErr, ok := err.(*runner.HookError); ok {
+				fmt.Fprint(os.Stderr, hookErr.FormatReport())
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			os.Exit(1)
+		}
+
+		return nil
 	},
 }
 
