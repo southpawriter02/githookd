@@ -1,0 +1,130 @@
+name: "Setup githookd"
+description: "Download and install githookd for use in CI/CD pipelines"
+author: "githookd"
+
+branding:
+  icon: "git-branch"
+  color: "orange"
+
+inputs:
+  version:
+    description: "Version of githookd to install (e.g. 'v1.0.0' or 'latest')"
+    required: false
+    default: "latest"
+  github-token:
+    description: "GitHub token for API requests (avoids rate limiting)"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: "The installed version of githookd"
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: "Path to the ghm binary"
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect platform
+      id: platform
+      shell: bash
+      run: |
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+
+        case "$OS" in
+          linux)  GOOS="linux" ;;
+          darwin) GOOS="darwin" ;;
+          mingw*|msys*|cygwin*) GOOS="windows" ;;
+          *) echo "::error::Unsupported OS: $OS"; exit 1 ;;
+        esac
+
+        case "$ARCH" in
+          x86_64|amd64) GOARCH="amd64" ;;
+          aarch64|arm64) GOARCH="arm64" ;;
+          *) echo "::error::Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+
+        EXT="tar.gz"
+        if [ "$GOOS" = "windows" ]; then
+          EXT="zip"
+        fi
+
+        echo "os=$GOOS" >> "$GITHUB_OUTPUT"
+        echo "arch=$GOARCH" >> "$GITHUB_OUTPUT"
+        echo "ext=$EXT" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve version
+      id: version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        VERSION="${{ inputs.version }}"
+
+        if [ "$VERSION" = "latest" ]; then
+          REPO="${{ github.repository }}"
+          # Fall back to the action's own repository if running standalone
+          if [ -z "$REPO" ] || [ "$REPO" = "" ]; then
+            REPO="githookd/githookd"
+          fi
+
+          VERSION=$(curl -sSf \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/releases/latest" \
+            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not determine latest version"
+            exit 1
+          fi
+        fi
+
+        # Strip leading 'v' for filename construction
+        VERSION_NUM="${VERSION#v}"
+
+        echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "number=$VERSION_NUM" >> "$GITHUB_OUTPUT"
+
+    - name: Download and install
+      id: install
+      shell: bash
+      run: |
+        REPO="${{ github.repository }}"
+        TAG="${{ steps.version.outputs.tag }}"
+        VERSION="${{ steps.version.outputs.number }}"
+        OS="${{ steps.platform.outputs.os }}"
+        ARCH="${{ steps.platform.outputs.arch }}"
+        EXT="${{ steps.platform.outputs.ext }}"
+
+        FILENAME="githookd_${VERSION}_${OS}_${ARCH}.${EXT}"
+        URL="https://github.com/${REPO}/releases/download/${TAG}/${FILENAME}"
+
+        INSTALL_DIR="${HOME}/.githookd/bin"
+        mkdir -p "$INSTALL_DIR"
+
+        echo "Downloading githookd ${TAG} for ${OS}/${ARCH}..."
+        echo "  URL: ${URL}"
+
+        if [ "$EXT" = "zip" ]; then
+          curl -sSfL "$URL" -o /tmp/ghm.zip
+          unzip -o /tmp/ghm.zip -d "$INSTALL_DIR"
+          rm /tmp/ghm.zip
+        else
+          curl -sSfL "$URL" | tar xz -C "$INSTALL_DIR"
+        fi
+
+        chmod +x "$INSTALL_DIR/ghm"
+
+        # Add to PATH
+        echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+
+        # Verify installation
+        "$INSTALL_DIR/ghm" --help > /dev/null 2>&1
+
+        echo "version=$TAG" >> "$GITHUB_OUTPUT"
+        echo "path=$INSTALL_DIR/ghm" >> "$GITHUB_OUTPUT"
+        echo "✅ githookd ${TAG} installed to ${INSTALL_DIR}/ghm"

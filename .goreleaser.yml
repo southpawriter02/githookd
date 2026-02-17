@@ -1,0 +1,124 @@
+# ──────────────────────────────────────────────────────────────
+# githookd GoReleaser configuration
+# https://goreleaser.com/customization/
+# ──────────────────────────────────────────────────────────────
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: ghm
+    main: ./cmd/ghm
+    binary: ghm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    builds: [ghm]
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - docs/**/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "📖 Documentation"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "🧹 Maintenance"
+      regexp: '^.*?(chore|ci|refactor|test)(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - "^Merge"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: githookd
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## githookd {{ .Tag }}
+
+    Cross-platform Git hook manager — install once, manage everywhere.
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/githookd/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ### Quick Install
+
+    ```bash
+    # macOS (Homebrew)
+    brew install {{ .Env.GITHUB_REPOSITORY_OWNER }}/tap/githookd
+
+    # Download binary (Linux/macOS)
+    curl -sSfL https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/githookd/releases/download/{{ .Tag }}/githookd_{{ .Version }}_linux_amd64.tar.gz | tar xz
+
+    # Go install
+    go install githookd/cmd/ghm@{{ .Tag }}
+    ```
+
+# ──────────────────────────────────────────────
+# Homebrew Tap (optional — requires a tap repo)
+# ──────────────────────────────────────────────
+brews:
+  - name: githookd
+    ids: [default]
+    repository:
+      owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/githookd"
+    description: "A fast and flexible Git hook manager"
+    license: "MIT"
+    install: |
+      bin.install "ghm"
+    test: |
+      system "#{bin}/ghm", "--help"
+    commit_author:
+      name: "github-actions[bot]"
+      email: "github-actions[bot]@users.noreply.github.com"
